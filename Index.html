@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>Endless Runner 3D – Full Update</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
+<style>
+  body{margin:0;overflow:hidden;background:#87ceeb}
+  #hud{position:fixed;top:10px;left:10px;color:#fff;font:20px Arial;z-index:10}
+</style>
+</head>
+<body>
+<div id="hud">Score: 0</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+<script>
+/* ================== BASIC ================== */
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x87ceeb);
+const camera=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,0.1,2000);
+camera.position.set(0,5,14);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+document.body.appendChild(renderer.domElement);
+
+/* ================== LIGHT ================== */
+scene.add(new THREE.AmbientLight(0xffffff,.75));
+const sun=new THREE.DirectionalLight(0xffffff,.6);
+sun.position.set(10,20,10); scene.add(sun);
+
+/* ================== AUDIO (no assets) ================== */
+const AC=window.AudioContext||window.webkitAudioContext;
+const audio=new AC();
+function beep(freq,dur=.08,vol=.03){
+  const o=audio.createOscillator(), g=audio.createGain();
+  o.frequency.value=freq; g.gain.value=vol;
+  o.connect(g).connect(audio.destination);
+  o.start(); setTimeout(()=>o.stop(),dur*1000);
+}
+
+/* ================== PLAYER (better human) ================== */
+const player=new THREE.Group();
+const body=new THREE.Mesh(
+  new THREE.CylinderGeometry(.35,.45,1.6),
+  new THREE.MeshStandardMaterial({color:0xff4444})
+);
+const head=new THREE.Mesh(
+  new THREE.SphereGeometry(.35),
+  new THREE.MeshStandardMaterial({color:0xffe0bd})
+); head.position.y=1.3; body.add(head);
+
+// arms
+const armMat=new THREE.MeshStandardMaterial({color:0x3333ff});
+const lArm=new THREE.Mesh(new THREE.CylinderGeometry(.12,.12,.9),armMat);
+const rArm=lArm.clone();
+lArm.position.set(-.55,.4,0); rArm.position.set(.55,.4,0);
+lArm.rotation.z=.6; rArm.rotation.z=-.6;
+body.add(lArm); body.add(rArm);
+
+player.add(body);
+player.position.y=.8;
+scene.add(player);
+
+/* ================== POLICE + DOG ================== */
+function chaser(color){
+  const g=new THREE.Group();
+  const b=new THREE.Mesh(
+    new THREE.CylinderGeometry(.3,.4,1.4),
+    new THREE.MeshStandardMaterial({color})
+  );
+  const h=new THREE.Mesh(
+    new THREE.SphereGeometry(.3),
+    new THREE.MeshStandardMaterial({color:0xffe0bd})
+  ); h.position.y=1.1; b.add(h);
+  g.add(b); g.position.y=.75;
+  scene.add(g); return g;
+}
+const police=chaser(0x0033aa);
+const dog=new THREE.Mesh(
+  new THREE.BoxGeometry(.6,.4,1),
+  new THREE.MeshStandardMaterial({color:0x8b4513})
+);
+dog.position.y=.4; scene.add(dog);
+
+/* ================== ROAD (TRUE UNLIMITED) ================== */
+const lanes=[-2,2]; let lane=0;
+const roadTiles=[];
+const roadGeo=new THREE.PlaneGeometry(6,60);
+const roadMat=new THREE.MeshStandardMaterial({color:0x444});
+for(let i=0;i<14;i++){
+  const t=new THREE.Mesh(roadGeo,roadMat);
+  t.rotation.x=-Math.PI/2; t.position.z=-i*60;
+  scene.add(t); roadTiles.push(t);
+}
+
+/* ================== CITY + TREES + LIGHTS ================== */
+function building(x,z){
+  const h=4+Math.random()*8;
+  const b=new THREE.Mesh(
+    new THREE.BoxGeometry(3,h,3),
+    new THREE.MeshStandardMaterial({color:0x9aa0a6})
+  );
+  b.position.set(x,h/2,z); scene.add(b);
+}
+function tree(x,z){
+  const tr=new THREE.Mesh(
+    new THREE.CylinderGeometry(.2,.3,1),
+    new THREE.MeshStandardMaterial({color:0x8b4513})
+  );
+  const lf=new THREE.Mesh(
+    new THREE.SphereGeometry(.8),
+    new THREE.MeshStandardMaterial({color:0x228b22})
+  );
+  lf.position.y=1; tr.add(lf);
+  tr.position.set(x,.5,z); scene.add(tr);
+}
+for(let z=-80;z>-1400;z-=30){
+  building(-7,z); building(7,z);
+  tree(-5,z+10); tree(5,z-10);
+}
+
+/* ================== OBJECTS ================== */
+let coins=[], trains=[], cars=[], powers=[];
+let spawnZ=-120;
+let score=0, speed=.38, vy=0, jumping=false;
+let magnet=false, surf=false;
+
+/* spawn helpers */
+function coin(z){
+  const c=new THREE.Mesh(
+    new THREE.SphereGeometry(.25),
+    new THREE.MeshStandardMaterial({color:0xffd700})
+  );
+  c.position.set(lanes[Math.random()>.5?1:0],1,z);
+  scene.add(c); coins.push(c);
+}
+function train(z){
+  const t=new THREE.Mesh(
+    new THREE.BoxGeometry(1.8,2,8),
+    new THREE.MeshStandardMaterial({color:0x222})
+  );
+  t.position.set(lanes[Math.random()>.5?1:0],1,z);
+  scene.add(t); trains.push(t);
+}
+function car(z){
+  const c=new THREE.Mesh(
+    new THREE.BoxGeometry(1.6,.8,3),
+    new THREE.MeshStandardMaterial({color:0xff0000})
+  );
+  c.position.set(lanes[Math.random()>.5?1:0],.4,z);
+  scene.add(c); cars.push(c);
+}
+function power(type,z){
+  const p=new THREE.Mesh(
+    new THREE.BoxGeometry(.6,.6,.6),
+    new THREE.MeshStandardMaterial({color:type==="magnet"?0x00ffff:0xff00ff})
+  );
+  p.userData.type=type;
+  p.position.set(lanes[Math.random()>.5?1:0],1,z);
+  scene.add(p); powers.push(p);
+}
+
+/* ================== INPUT ================== */
+let sx=0,lastTap=0;
+addEventListener("touchstart",e=>{
+  audio.resume();
+  sx=e.touches[0].clientX;
+  const n=Date.now();
+  if(n-lastTap<300 && !jumping){ vy=.42; jumping=true; beep(800); }
+  lastTap=n;
+});
+addEventListener("touchend",e=>{
+  const dx=e.changedTouches[0].clientX-sx;
+  if(dx>50&&lane<1) lane++;
+  if(dx<-50&&lane>-1) lane--;
+});
+
+/* ================== LOOP ================== */
+function loop(){
+  requestAnimationFrame(loop);
+
+  // move
+  player.position.z-=speed;
+  player.position.x+=(lanes[lane+1]-player.position.x)*.25;
+
+  // arm swing
+  const s=Math.sin(Date.now()*0.01);
+  lArm.rotation.x=s*.6; rArm.rotation.x=-s*.6;
+
+  // jump
+  vy-=.02; player.position.y+=vy;
+  if(player.position.y<=.8){ player.position.y=.8; vy=0; jumping=false; }
+
+  // road recycle
+  roadTiles.forEach(t=>{
+    if(t.position.z-player.position.z>60) t.position.z-=840;
+  });
+
+  // spawn FAR AHEAD (visible early)
+  if(player.position.z<spawnZ){
+    coin(spawnZ-60); coin(spawnZ-40);
+    if(Math.random()<.7) train(spawnZ-100);
+    if(Math.random()<.6) car(spawnZ-80);
+    if(Math.random()<.2) power("magnet",spawnZ-50);
+    if(Math.random()<.15) power("surf",spawnZ-90);
+    spawnZ-=60;
+  }
+
+  // coins
+  coins.forEach((c,i)=>{
+    if(magnet) c.position.lerp(player.position,.15);
+    if(c.position.distanceTo(player.position)<.6){
+      scene.remove(c); coins.splice(i,1); score+=10; beep(1200);
+    }
+  });
+
+  // powers
+  powers.forEach((p,i)=>{
+    if(p.position.distanceTo(player.position)<.7){
+      if(p.userData.type==="magnet"){ magnet=true; setTimeout(()=>magnet=false,8000); }
+      else{ surf=true; setTimeout(()=>surf=false,6000); }
+      scene.remove(p); powers.splice(i,1); beep(600);
+    }
+  });
+
+  // hazards
+  function hit(arr,rad){
+    arr.forEach((o,i)=>{
+      o.position.z+=speed;
+      if(o.position.distanceTo(player.position)<rad){
+        if(surf){ surf=false; scene.remove(o); arr.splice(i,1); beep(300); }
+        else{ alert("Game Over\nScore: "+score); location.reload(); }
+      }
+    });
+  }
+  hit(trains,1.3); hit(cars,1.1);
+
+  // police + dog follow
+  police.position.z=player.position.z+6;
+  police.position.x+=(player.position.x-police.position.x)*.08;
+  dog.position.z=player.position.z+8;
+  dog.position.x+=(player.position.x-dog.position.x)*.1;
+
+  score++; document.getElementById("hud").innerText="Score: "+score;
+
+  camera.position.z=player.position.z+14;
+  camera.position.x=player.position.x;
+
+  renderer.render(scene,camera);
+}
+loop();
+
+addEventListener("resize",()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>
